@@ -412,6 +412,61 @@ async def product_report_settings_error(interaction: discord.Interaction, error:
         else:
             await interaction.followup.send(f"Błąd: {error}", ephemeral=True)
 
+# --- Komendy Systemu XP ---
+@bot.tree.command(name="rank", description="Wyświetla Twój aktualny poziom, XP i rangę na serwerze.")
+@app_commands.describe(uzytkownik="Sprawdź rangę innego użytkownika (opcjonalnie).")
+async def rank_command(interaction: discord.Interaction, uzytkownik: discord.Member = None):
+    if not interaction.guild:
+        await interaction.response.send_message("Tej komendy można używać tylko na serwerze.", ephemeral=True)
+        return
+
+    target_user = uzytkownik or interaction.user
+    
+    # Pobieramy statystyki z bazy danych
+    stats = database.get_user_stats(interaction.guild.id, target_user.id)
+    current_xp = stats['xp']
+    current_level = stats['level']
+
+    # Obliczamy XP potrzebne do następnego poziomu
+    xp_needed, next_level_gate = leveling.xp_to_next_level(current_xp, current_level)
+    
+    # Pobieramy pozycję w rankingu
+    rank_info = database.get_user_rank_in_server(interaction.guild.id, target_user.id)
+    rank_str = f"#{rank_info[0]}" if rank_info else "Brak w rankingu"
+
+    # Tworzymy embed
+    embed = discord.Embed(
+        title=f"Ranga dla {target_user.display_name}",
+        color=target_user.color
+    )
+    embed.set_thumbnail(url=target_user.display_avatar.url)
+    
+    embed.add_field(name="Poziom", value=f"**{current_level}**", inline=True)
+    embed.add_field(name="Doświadczenie (XP)", value=f"**{current_xp} / {next_level_gate}**", inline=True)
+    embed.add_field(name="Ranga na serwerze", value=f"**{rank_str}**", inline=True)
+    
+    # Pasek postępu
+    current_level_xp_start = leveling.total_xp_for_level(current_level)
+    xp_in_current_level = current_xp - current_level_xp_start
+    xp_for_this_level_up = next_level_gate - current_level_xp_start
+    
+    # Uniknięcie dzielenia przez zero jeśli z jakiegoś powodu próg xp jest zerowy
+    if xp_for_this_level_up > 0:
+        progress_percentage = (xp_in_current_level / xp_for_this_level_up) * 100
+    else:
+        progress_percentage = 100.0
+
+    progress_bar = "█" * int(progress_percentage / 10) + "░" * (10 - int(progress_percentage / 10))
+    
+    embed.add_field(
+        name=f"Postęp do poziomu {current_level + 1}",
+        value=f"`{progress_bar}` ({progress_percentage:.2f}%)",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+
 # --- Zadania w Tle ---
 @tasks.loop(hours=4)
 async def scan_products_task():
